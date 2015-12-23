@@ -39,30 +39,30 @@ The following code chunk downloads the data (if not already present in .csv form
 
 ```{r,cache=TRUE}
 fileTrain <- "pml-training.csv"
-fileValidation <- "pml-testing.csv"
+fileTesting <- "pml-testing.csv"
 # Check if the data is present, otherwise download it
-if (!file.exists(fileTrain) | !file.exists(fileValidation)) {
+if (!file.exists(fileTrain) | !file.exists(fileTesting)) {
      download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", fileTrain) 
-     download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", fileValidation) 
+     download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", fileTesting) 
 }
 trainFull <- read.csv(fileTrain,na.strings=c("NA","#DIV/0!"))
-validation <- read.csv(fileValidation,na.strings=c("NA","#DIV/0!"))
+testing <- read.csv(fileTesting,na.strings=c("NA","#DIV/0!"))
 # Show some of the data
 trainFull[1:6,1:5]
 ```
-## Creating a Test Set
-The dataset comes with a supplied test set, however, the *classe* label for these values is not included. As a result, we will be treating the supplied test set as a validation set, and partition the supplied training set into a training and testing set. The seed is set to allow for consistent results.
+## Creating a Validation Set
+The dataset comes with a supplied test set, however, the *classe* label for these values is not included. As a result, we will be holding out the supplied test set for now, and partition the supplied training set into a training and validation set. The seed is set to allow for consistent results.
 
 ```{r,cache=TRUE}
-set.seed(12345)
+set.seed(54321)
 inTrain <- createDataPartition(trainFull$classe, p = .6, list = FALSE)
 training <- trainFull[inTrain,]
-testing <- trainFull[-inTrain,]
+validation <- trainFull[-inTrain,]
 ```
 
 
 ## Data Preprocessing: Selecting the Predictors
-The original dataset contains 160 columns, some of which are more useful than others. There are many tests we can apply to test for usefulness, however, we must be careful to only look at the training data when doing so. After we have made a selection of useful predictors based on the training data, the same subset must be used for the test data. The following code chunk performs a first selection of predictors, throwing away those predictors that have a near zero variance. There is some [debate](http://www.r-bloggers.com/near-zero-variance-predictors-should-we-remove-them/) as to whether zero variance predictors should always be removed, but for this project we have chosen to do so. In addition, we will be omitting the first 7 columns:
+The original dataset contains 160 columns, some of which are more useful than others. There are many tests we can apply to test for usefulness, however, we must be careful to only look at the training data when doing so. After we have made a selection of useful predictors based on the training data, the same subset must be used for the validation and test data. The following code chunk performs a first selection of predictors, throwing away those predictors that have a near zero variance. There is some [debate](http://www.r-bloggers.com/near-zero-variance-predictors-should-we-remove-them/) as to whether zero variance predictors should always be removed, but for this project we have chosen to do so. In addition, we will be omitting the first 7 columns:
 
 ```r names(training)[1:7]``` 
 
@@ -70,21 +70,21 @@ As they contain information a typical model should not be using. After all, the 
 
 ```{r,cache=TRUE}
 predictorsTrain1 <- training[,-(1:7)]
-predictorsTest1 <- testing[,-(1:7)]
 predictorsVal1 <- validation[,-(1:7)]
+predictorsTest1 <- testing[,-(1:7)]
 nzvTrain <- nearZeroVar(predictorsTrain1,saveMetrics = TRUE)$nzv
 predictorsTrain2 <- predictorsTrain1[,nzvTrain==FALSE]
 # Use training data metrics to subset test and validation set!
-predictorsTest2 <- predictorsTest1[,nzvTrain==FALSE] 
 predictorsVal2 <- predictorsVal1[,nzvTrain==FALSE]
+predictorsTest2 <- predictorsTest1[,nzvTrain==FALSE] 
 ```
 Next, we will be removing those predictors that have missing values in the training set. Note that this constitutes removing *columns*, not rows, with missing values. There are many thousands of missing values, but most are constituted by a few columns that are nearly fully NA. Thus, it is ok to remove these columns - but not all those rows, as this would be removing useful information. There appear to be no columns with only a few NAs: either they are nearly all NA or there are none. Otherwise, if there were a limited amount of NA values it would be interesting to delete those rows. However, with the given data it seems removing the useless columns is better.
 
 ```{r,cache=TRUE}
 noNAsTrain = sapply(predictorsTrain2,function(x) sum(is.na(x))) == 0
 predictorsTrain3 <- predictorsTrain2[,noNAsTrain==TRUE]
-predictorsTest3 <- predictorsTest2[,noNAsTrain==TRUE]
 predictorsVal3 <- predictorsVal2[,noNAsTrain==TRUE]
+predictorsTest3 <- predictorsTest2[,noNAsTrain==TRUE]
 ```
 
 Finally, we take out the class label:
@@ -92,16 +92,16 @@ Finally, we take out the class label:
 ```{r,cache=TRUE}
 classTrain <- predictorsTrain3$classe
 predictorsTrainFinal <- predictorsTrain3[,names(predictorsTrain3)!="classe"]
-classTest <- predictorsTest3$classe
-predictorsTestFinal <- predictorsTest3[,names(predictorsTest3)!="classe"]
-predictorsValFinal <- predictorsVal3
+classVal <- predictorsVal3$classe
+predictorsValFinal <- predictorsVal3[,names(predictorsVal3)!="classe"]
+predictorsTestFinal <- predictorsTest3
 ```
 
 # Analysis: Qualitative Activity Recognition
 ## Model Building
 We will be using the [Random Forests](https://en.wikipedia.org/wiki/Random_forest) algorithm by using the R package *caret*'s function *train()* with *method=rf*. Please note that we will not be using the formula notation, as it is [highly inefficient](http://stackoverflow.com/questions/6449588/r-memory-management-advice-caret-model-matrices-data-frames/6555053#6555053). Before fitting the model, the data is preprocessed by normalization through centering and scaling. In addition, 10-fold cross validation is applied to detect and prevent overfitting, as *caret*'s function *train()* handles this for us. Cross validation is especially necessary for random forests models, as they are sensitive to overfitting on top of their long execution time. The seed is set to ensure consistent results.
 ```{r,cache=TRUE}
-set.seed(12345)
+set.seed(54321)
 model <- train(x = predictorsTrainFinal, y = classTrain, method = "rf",
                na.action = na.omit, preProcess = c("center", "scale"),
                trControl = trainControl(method = "cv"), allowParallel = TRUE)
@@ -113,55 +113,35 @@ varImpPlot(model$finalModel,main="Variable Importance Plot",pch=19)
 title(xlab="Variable Importance for Data Partitioning\n")
 ```
 
-
-```{r,echo=FALSE,eval=FALSE}
-#Finally, we plot the evolution of the model accuracy, as determined using cross-validation, in terms of the number of randomly selected predictors at each level, *mtry* in the printouts above.
-#plot(model)
-```
-
 ## Model Evaluation
-In evaluating the model, we differentiate between in sample error, also called resubstitution error, and out of sample error, sometimes called generalization error. In sample errors are generally a bit more optimistic than out of sample errors due to overfitting. However, it is important to note that the out-of-bag (OOB) error estimate is an exception to this rule, as it has a [slight pessimistic tendency](http://stats.stackexchange.com/questions/105811/how-would-one-formally-prove-that-the-oob-error-in-random-forest-is-unbiased). This small pessimistic bias is due to the fact that OOB error estimates are calculated on training sets that are (at least) one training case smaller than the full training set. We will now be studying the in sample and out of sample error estimates.
+In evaluating the model, we differentiate between **in sample error**, also called resubstitution error, and **out of sample error**, sometimes called generalization error. In sample errors are generally more optimistic than out of sample errors due to overfitting. However, it is important to note that the out-of-bag (OOB) error estimate is an exception to this rule, as it has a [slight pessimistic tendency](http://stats.stackexchange.com/questions/105811/how-would-one-formally-prove-that-the-oob-error-in-random-forest-is-unbiased). This small pessimistic bias is due to the fact that OOB error estimates are calculated on training sets that are (at least) one training case smaller than the full training set. We will now be studying the in sample and out of sample error estimates.
 
 ### In Sample Error
 To evaluate the final model created by the random forests algorithm, we first print it to examine which metrics are already available.
 ```{r}
 print(model$finalModel)
 ```
-We note an out-of-bag (OOB) error estimate of < 1%, and a good looking confusion matrix. However, the OOB error and the confusion matrix shown above are calculated on the training set. We will now be looking at the performance on the created test set to evaluate the model on true out of sample data.
+We note an out-of-bag (OOB) error estimate of ~ 0.76%, and a good looking confusion matrix. However, the OOB error and the confusion matrix shown above are calculated on the training set. We will now be looking at the performance on the created validation set to evaluate the model on true out of sample data.
 
 ### Out of Sample Error
-First, we use the model to predict the class labels for the test set, then, we compare it to their true labels. This is done using the confusion matrix as shown below:
+First, we use the model to predict the class labels for the validation set, then, we compare it to their true labels. This is done using the confusion matrix as shown below. Note that when using new data in a model created using *caret*'s *train()* function, we do not need to preprocess this new data ourselves. [*Caret* saves the preprocessing parameters](http://stats.stackexchange.com/questions/46216/pca-and-k-fold-cross-validation-in-caret) and will use them to preprocess the validation data during the predict call, in the same way as the training data was when modeling. 
 
 ```{r}
-predictions <- predict(model, predictorsTestFinal) 
-confM <- confusionMatrix(predictions, classTest)
+predictions <- predict(model, predictorsValFinal) 
+confM <- confusionMatrix(predictions, classVal)
 confM
 ```
-Notably, we see an accuracy of `r confM$overall[1]*100`% for out of sample data, with a very significant P-value. Again, we see a good looking confusion matrix, which we now visualize with colours. 
+Notably, we see an accuracy of `r confM$overall[1]*100`% for out of sample data, with a very significant P-value. We note that we did not exceed our OOB error estimate of ~ 0.76%, and have thus successfully avoided overfitting through the cross validation performed by *caret*'s *train()* function. Again, we see a good looking confusion matrix, which we now visualize with colours. 
 ```{r,fig.show="hold",fig.cap="**Figure 2:** Coloured visualization of the confusion matrix. The lighter, larger values are concentrated on the diagonal, while the darker, near-zero values cover everything else, as desired."}
 new.palette=colorRampPalette(c("darkblue","lightblue"),space="rgb") 
 plot(levelplot(confM$table,main ="Visual Confusion Matrix",xlab=NULL,ylab=NULL,col.regions=new.palette(100)))
 ```
-```{r,echo=FALSE,eval=FALSE}
-predictorsTestFinal$predRight <- predictions==classTest
 
-```
-
-```{r,echo=FALSE}
-#library(ROCR)
-#pred.obj <- prediction(predictions, classTest)
-#performance(pred.obj, measure=)
-#print(model$finalModel)
-```
-```{r}
-
-```
-
-# Validation Set
-The following code chunk was used to generate the answers for the validation set, also known as the originally provided testing set. The instruction for generating the files has been commented out, and the answers are printed instead.
+# Test Set
+The following code chunk was used to generate the answers for the provided test set. The instruction for generating the files has been commented out, and the answers are printed instead.
 
 ```{r,results='hold'}
-# The validation part of the assigment
+# The testing set part of the assigment
 pml_write_files = function(x){
   n = length(x)
   for(i in 1:n){
@@ -169,8 +149,8 @@ pml_write_files = function(x){
     write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
   }
 }
-predictionsVal <- predict(model, predictorsValFinal)
-answers <- as.character(predictionsVal)
+predictionsTest <- predict(model, predictorsTestFinal)
+answers <- as.character(predictionsTest)
 answers
 #pml_write_files(answers)
 ```
@@ -206,4 +186,4 @@ sessionInfo()
 * http://stackoverflow.com/questions/736514/r-random-forests-variable-importance
 * http://stats.stackexchange.com/questions/105811/how-would-one-formally-prove-that-the-oob-error-in-random-forest-is-unbiased
 * https://en.wikipedia.org/wiki/Decision_tree_learning#Gini_impurity
-
+* http://stats.stackexchange.com/questions/46216/pca-and-k-fold-cross-validation-in-caret
