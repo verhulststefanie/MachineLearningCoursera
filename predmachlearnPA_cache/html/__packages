@@ -1,0 +1,9 @@
+base
+lattice
+ggplot2
+caret
+rattle
+randomForest
+foreach
+iterators
+doParallel
